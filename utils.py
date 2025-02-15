@@ -238,9 +238,10 @@ class TextExtractor:
         # raw_text = self.markitdown(file_path)
         print(f"Raw text length: {len(raw_text)}")
         clean_text = self.clean_text(raw_text)
-        print(f"Cleaned text length: {len(raw_text)}")
+        print(f"Cleaned text length: {len(clean_text)}")
         # sentences = self.extract_sentences(clean_text)
-        sentences = self.split_chunks(clean_text)
+        # sentences = self.split_chunks(clean_text)
+        sentences = [clean_text]
         print(f"Sentences: {len(sentences)}")
         
         # Prepare output
@@ -307,30 +308,53 @@ class CLAPreprocessor:
         except json.JSONDecodeError:
             raise json.JSONDecodeError(f"Invalid JSON format in: {file_path}")
 
-    def _process_data(self):
-        """Processes the JSON data and creates the Hugging Face Dataset (with shifted labels)."""
+    def _process_data(self, chunk_size=4096):  # Add chunk_size parameter
         all_sentences = []
         for file_path in self.json_files:
             data = self._read_json(file_path)
             all_sentences.extend(data["sentences"])
 
-        tokenized_data = self.tokenizer(all_sentences, truncation=True, padding=True, return_tensors="pt")
+        all_input_ids = []
+        all_attention_masks = []
+        all_labels = []
 
-        input_ids = tokenized_data["input_ids"]
-        attention_mask = tokenized_data["attention_mask"]
+        for sentence in all_sentences:
+            tokenized_sentence = self.tokenizer(sentence, truncation=False, padding=False, return_tensors="pt") # No padding/truncation here
+            input_ids = tokenized_sentence["input_ids"]
+            attention_mask = tokenized_sentence["attention_mask"]
 
-        # Shift input IDs to create labels (for CLM)
-        labels = input_ids.clone()
-        labels[:, :-1] = input_ids[:, 1:]  # Shift one position to the right
-        labels[:, -1] = self.tokenizer.eos_token_id  # Pad the last token in each sequence
+            # Create chunks
+            for i in range(0, input_ids.size(1), chunk_size -1): # Changed range to chunk_size-1 as we want to shift by one
+                chunk_input_ids = input_ids[:, i:i + chunk_size]
+                chunk_attention_mask = attention_mask[:, i:i + chunk_size]
+
+                # Ensure chunk is of correct length by padding if necessary
+                padding_length = chunk_size - chunk_input_ids.size(1)
+                if padding_length > 0:
+                  chunk_input_ids = torch.cat([chunk_input_ids, torch.full((1, padding_length), self.tokenizer.pad_token_id, dtype=torch.long)], dim=1)
+                  chunk_attention_mask = torch.cat([chunk_attention_mask, torch.zeros((1, padding_length), dtype=torch.long)], dim=1)
+
+                chunk_labels = chunk_input_ids.clone()
+                chunk_labels[:, :-1] = chunk_input_ids[:, 1:]
+                chunk_labels[:, -1] = self.tokenizer.pad_token_id
+
+                all_input_ids.append(chunk_input_ids)
+                all_attention_masks.append(chunk_attention_mask)
+                all_labels.append(chunk_labels)
+
+        # Concatenate chunks to create tensors
+        all_input_ids = torch.cat(all_input_ids, dim=0)
+        all_attention_masks = torch.cat(all_attention_masks, dim=0)
+        all_labels = torch.cat(all_labels, dim=0)
 
         dataset_dict = {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-            "labels": labels
+            "input_ids": all_input_ids,
+            "attention_mask": all_attention_masks,
+            "labels": all_labels
         }
 
         self.dataset = Dataset.from_dict(dataset_dict)
+
 
     def preprocess(self):
         """Preprocesses the data and creates the Hugging Face Dataset."""
