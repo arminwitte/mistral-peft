@@ -18,11 +18,11 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from markitdown import MarkItDown
 import nltk
 
-try:
-    nltk.data.find('tokenizers/punkt_tab')  # Check if Punkt tokenizer is downloaded
-except LookupError:
-    print("Downloading Punkt tokenizer. This might take a moment...")
-    nltk.download('punkt_tab')
+# try:
+#     nltk.data.find('tokenizers/punkt_tab')  # Check if Punkt tokenizer is downloaded
+# except LookupError:
+#     print("Downloading Punkt tokenizer. This might take a moment...")
+nltk.download('punkt_tab')
 
 
 def load_base_model(model_name: str = "mistralai/Mistral-7B-v0.3"):
