@@ -16,6 +16,8 @@ huggingface_hub
 protobuf
 sentencepiece
 PyPDF2
+markitdown
+
 
 
 
