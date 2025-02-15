@@ -36,7 +36,7 @@ def load_base_model(model_name: str = "mistralai/Mistral-7B-v0.3"):
 
     model = AutoModelForCausalLM.from_pretrained(
         model_name, torch_dtype=torch.float16, device_map="auto",
-    # quantization_config=quantization_config,
+    quantization_config=quantization_config,
     )
     return model, tokenizer
 
@@ -113,7 +113,7 @@ def generate_response(
 
 
 
-class SentenceExtractor:
+class TextExtractor:
     def __init__(self, language: str = "en"):
         """Initialize spaCy for sentence extraction.
         
@@ -209,6 +209,15 @@ class SentenceExtractor:
             sentences = [s.replace("LINK_", "[").replace("_TO_", "](").replace("BOLD_", "**").replace("ITALIC_", "*").replace("CODE_", "`") for s in sentences]
 
         return sentences
+
+    def split_chunks(self, text, chunk_size=4096):
+        n_chunks = len(text) // chunk_size
+        chunks = []
+        for i in range(n_chunks):
+            chunks.append(text[i*chunk_size:(i+1)*chunk_size])
+
+        return chunks
+       
     
     def process_document(
         self,
@@ -231,7 +240,7 @@ class SentenceExtractor:
         clean_text = self.clean_text(raw_text)
         print(f"Cleaned text length: {len(raw_text)}")
         # sentences = self.extract_sentences(clean_text)
-        sentences = self.split_into_sentences(clean_text)
+        sentences = self.split_chunks(clean_text)
         print(f"Sentences: {len(sentences)}")
         
         # Prepare output
