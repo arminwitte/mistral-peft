@@ -270,6 +270,120 @@ class TextExtractor:
     #     print(f"Error: {e}")
 
 
+
+import json
+import os
+from datasets import Dataset
+from transformers import AutoTokenizer
+
+class CLAPreprocessor:
+    def __init__(self, json_files, tokenizer, nlp=None):
+        """
+        Initializes the CLAPreprocessor.
+
+        Args:
+            json_files (list or str): A list of paths to JSON files or a single path.
+            tokenizer: The Hugging Face tokenizer to use.
+            nlp: An optional spaCy language model. If None, language detection will be attempted.
+        """
+
+        if isinstance(json_files, str):
+            json_files = [json_files]
+
+        self.json_files = json_files
+        self.tokenizer = tokenizer
+        self.nlp = nlp
+        self.dataset = None
+
+    def _read_json(self, file_path):
+        """Reads a single JSON file."""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except FileNotFoundError:
+            raise FileNotFoundError(f"File not found: {file_path}")
+        except json.JSONDecodeError:
+            raise json.JSONDecodeError(f"Invalid JSON format in: {file_path}")
+
+    def _process_data(self):
+        """Processes the JSON data and creates the Hugging Face Dataset (with shifted labels)."""
+        all_sentences = []
+        for file_path in self.json_files:
+            data = self._read_json(file_path)
+            all_sentences.extend(data["sentences"])
+
+        tokenized_data = self.tokenizer(all_sentences, truncation=True, padding=True, return_tensors="pt")
+
+        input_ids = tokenized_data["input_ids"]
+        attention_mask = tokenized_data["attention_mask"]
+
+        # Shift input IDs to create labels (for CLM)
+        labels = input_ids.clone()
+        labels[:, :-1] = input_ids[:, 1:]  # Shift one position to the right
+        labels[:, -1] = self.tokenizer.pad_token_id  # Pad the last token in each sequence
+
+        dataset_dict = {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "labels": labels
+        }
+
+        self.dataset = Dataset.from_dict(dataset_dict)
+
+    def preprocess(self):
+        """Preprocesses the data and creates the Hugging Face Dataset."""
+        self._process_data()
+        return self.dataset
+
+
+# Example usage:
+from transformers import AutoTokenizer
+from datasets import load_from_disk  # Import for loading
+
+# 1. Initialize tokenizer and file paths:
+tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-v0.1")  # Or your preferred model
+json_file_paths = ["file1.json", "file2.json"]  # Or a single path: "file1.json"
+
+# 2. Create and preprocess the data:
+preprocessor = CLAPreprocessor(json_file_paths, tokenizer)
+dataset = preprocessor.preprocess()
+
+# 3. Inspect the dataset:
+print(dataset)
+print(dataset[0])  # Access the first example: input_ids, attention_mask, labels
+print(tokenizer.decode(dataset[0]["input_ids"])) # Decode input_ids to see the text
+print(tokenizer.decode(dataset[0]["labels"])) # Decode labels to see the next token prediction target
+
+# 4. Save the dataset (optional):
+dataset.save_to_disk("path/to/save/dataset")
+
+# 5. Load the dataset (optional):
+loaded_dataset = load_from_disk("path/to/save/dataset")
+print(loaded_dataset)
+
+
+# Example JSON file structure (file1.json, file2.json, etc.):
+# {
+#     "metadata": {
+#         "source": "file1.json",
+#         "language": "en",  # Or detect dynamically if nlp is provided
+#         "num_sentences": 3
+#     },
+#     "sentences": [
+#         "This is the first sentence.",
+#         "This is the second sentence.",
+#         "This is the third sentence."
+#     ]
+# }
+
+
+
+
+
+
+
+
+
 ################### MLM PREPROCESSOR ###################
 
 
