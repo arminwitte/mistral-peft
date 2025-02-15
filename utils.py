@@ -292,6 +292,8 @@ class CLAPreprocessor:
 
         self.json_files = json_files
         self.tokenizer = tokenizer
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
         self.nlp = nlp
         self.dataset = None
 
