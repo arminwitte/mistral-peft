@@ -336,45 +336,7 @@ class CLAPreprocessor:
         return self.dataset
 
 
-# Example usage:
-from transformers import AutoTokenizer
-from datasets import load_from_disk  # Import for loading
 
-# 1. Initialize tokenizer and file paths:
-tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-v0.1")  # Or your preferred model
-json_file_paths = ["file1.json", "file2.json"]  # Or a single path: "file1.json"
-
-# 2. Create and preprocess the data:
-preprocessor = CLAPreprocessor(json_file_paths, tokenizer)
-dataset = preprocessor.preprocess()
-
-# 3. Inspect the dataset:
-print(dataset)
-print(dataset[0])  # Access the first example: input_ids, attention_mask, labels
-print(tokenizer.decode(dataset[0]["input_ids"])) # Decode input_ids to see the text
-print(tokenizer.decode(dataset[0]["labels"])) # Decode labels to see the next token prediction target
-
-# 4. Save the dataset (optional):
-dataset.save_to_disk("path/to/save/dataset")
-
-# 5. Load the dataset (optional):
-loaded_dataset = load_from_disk("path/to/save/dataset")
-print(loaded_dataset)
-
-
-# Example JSON file structure (file1.json, file2.json, etc.):
-# {
-#     "metadata": {
-#         "source": "file1.json",
-#         "language": "en",  # Or detect dynamically if nlp is provided
-#         "num_sentences": 3
-#     },
-#     "sentences": [
-#         "This is the first sentence.",
-#         "This is the second sentence.",
-#         "This is the third sentence."
-#     ]
-# }
 
 
 
