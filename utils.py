@@ -320,7 +320,7 @@ class CLAPreprocessor:
         # Shift input IDs to create labels (for CLM)
         labels = input_ids.clone()
         labels[:, :-1] = input_ids[:, 1:]  # Shift one position to the right
-        labels[:, -1] = self.tokenizer.pad_token_id  # Pad the last token in each sequence
+        labels[:, -1] = self.tokenizer.eos_token_id  # Pad the last token in each sequence
 
         dataset_dict = {
             "input_ids": input_ids,
