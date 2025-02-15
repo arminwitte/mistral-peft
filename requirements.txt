@@ -15,5 +15,7 @@ datasets
 huggingface_hub
 protobuf
 sentencepiece
+PyPDF2
+
 
 
