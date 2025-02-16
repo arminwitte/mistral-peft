@@ -212,7 +212,7 @@ class TextExtractor:
             else:
                 raw_text = self.read_pdf(source)
                 
-            clean_text = self.clean_text(raw_text)
+            clean_text = raw_text # self.clean_text(raw_text)
             
             return {
                 "metadata": {
