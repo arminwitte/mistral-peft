@@ -143,7 +143,7 @@ class TextExtractor:
             page_text = page.extract_text(
                 extraction_mode="layout",
                 layout_mode_strip_rotated=False,
-                layout_mode_scale_weight=0.8,
+                layout_mode_scale_weight=1.25,
                 layout_mode_space_vertically=False
             )
             if page_text:
