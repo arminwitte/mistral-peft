@@ -99,16 +99,17 @@ def generate_response(
 
 ################### TEXT EXTRACTOR ###################
 
-import pdfplumber
-from pathlib import Path
-import json
+
 import re
+import json
 import httpx
-from typing import Union, Dict, Optional, List, Iterator
-from concurrent.futures import ThreadPoolExecutor
-from tqdm import tqdm
 import tempfile
 import os
+from pathlib import Path
+from typing import Union, Dict, Optional, List
+from concurrent.futures import ThreadPoolExecutor
+from tqdm import tqdm
+from pypdf import PdfReader
 
 class TextExtractor:
     def __init__(self, output_file: Union[str, Path], max_workers: int = 4):
@@ -124,17 +125,31 @@ class TextExtractor:
         self.results = []
             
     def read_pdf(self, file_path: Union[str, Path]) -> str:
-        """Read text from PDF file using pdfplumber."""
+        """Read text from PDF file using pypdf.
+        
+        Uses layout extraction mode for better text formatting and handles
+        rotated text.
+        """
         path = Path(file_path)
         if not path.exists():
             raise FileNotFoundError(f"PDF not found: {path}")
             
-        text = []
-        with pdfplumber.open(path) as pdf:
-            for page in pdf.pages:
-                text.append(page.extract_text())
+        text_parts = []
+        reader = PdfReader(path)
+        
+        for page in reader.pages:
+            # Extract text using layout mode for better formatting
+            # Include rotated text and adjust spacing for better results
+            page_text = page.extract_text(
+                extraction_mode="layout",
+                layout_mode_strip_rotated=False,
+                layout_mode_scale_weight=0.8,
+                layout_mode_space_vertically=False
+            )
+            if page_text:
+                text_parts.append(page_text)
                 
-        return "\n".join(text)
+        return "\n\n".join(text_parts)
 
     def download_pdf(self, url: str) -> Path:
         """Download PDF from URL to temporary file."""
@@ -149,9 +164,9 @@ class TextExtractor:
     
     def clean_text(self, text: str) -> str:
         """Clean extracted text for LLM finetuning."""
-        # Remove page numbers and headers
+        # Remove headers and footers
         text = re.sub(r'\f', '\n', text)
-        text = re.sub(r'\n\s*\d+\s*\n', '\n', text)
+        text = re.sub(r'^\s*\d+\s*$', '', text, flags=re.MULTILINE)  # Standalone page numbers
         text = re.sub(r'(?i)(page|seite)\s*\d+\s*(?:of|von)\s*\d+', '', text)
         
         # Clean scientific formatting
@@ -169,11 +184,11 @@ class TextExtractor:
         
         # Clean whitespace
         text = re.sub(r'\s+', ' ', text)  # Collapse multiple spaces
-        # text = re.sub(r'^\s+|\s+$', '', text, flags=re.MULTILINE)  # Trim lines
+        text = re.sub(r'^\s+|\s+$', '', text, flags=re.MULTILINE)  # Trim lines
         
         # Remove redundant whitespace around punctuation
-        # text = re.sub(r'\s+([.,;?!])', r'\1', text)
-        # text = re.sub(r'"\s+([^"]+)\s+"', r'"\1"', text)
+        text = re.sub(r'\s+([.,;?!])', r'\1', text)
+        text = re.sub(r'"\s+([^"]+)\s+"', r'"\1"', text)
         
         return text.strip()
 
@@ -191,7 +206,7 @@ class TextExtractor:
             else:
                 raw_text = self.read_pdf(source)
                 
-            # clean_text = self.clean_text(raw_text)
+            clean_text = self.clean_text(raw_text)
             
             return {
                 "metadata": {
@@ -223,37 +238,23 @@ class TextExtractor:
             sources: List of file paths or URLs
             url_list: If True, treat sources as URLs
         """
-        # Process documents in parallel
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             futures = [
                 executor.submit(self.process_single_document, source, url_list)
                 for source in sources
             ]
             
-            # Collect results as they complete
             for future in tqdm(futures, total=len(sources), desc="Processing documents"):
                 self.results.append(future.result())
 
     def __enter__(self):
-        """Context manager entry.
-        
-        Returns:
-            self: The TextExtractor instance
-        """
-        # Ensure output directory exists
+        """Context manager entry."""
         self.output_file.parent.mkdir(parents=True, exist_ok=True)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit. Saves results and cleans up.
-        
-        Args:
-            exc_type: Exception type if an error occurred
-            exc_val: Exception value if an error occurred
-            exc_tb: Exception traceback if an error occurred
-        """
+        """Context manager exit. Saves results and cleans up."""
         try:
-            # Save all results to the output file
             if self.results:
                 with self.output_file.open('w', encoding='utf-8') as f:
                     json.dump({
@@ -262,12 +263,7 @@ class TextExtractor:
                         "successful_documents": sum(1 for doc in self.results if not doc["metadata"].get("error"))
                     }, f, ensure_ascii=False, indent=2)
         finally:
-            # Always close the HTTP client
             self.http_client.close()
-
-
-
-
 
 
 
