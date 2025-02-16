@@ -99,9 +99,6 @@ def generate_response(
 
 ################### TEXT EXTRACTOR ###################
 
-
-   
-
 import pdfplumber
 from pathlib import Path
 import json
@@ -114,14 +111,17 @@ import tempfile
 import os
 
 class TextExtractor:
-    def __init__(self, max_workers: int = 4):
+    def __init__(self, output_file: Union[str, Path], max_workers: int = 4):
         """Initialize text extractor for LLM finetuning
         
         Args:
+            output_file: Path to save the final JSON output
             max_workers: Maximum number of concurrent workers for processing
         """
+        self.output_file = Path(output_file)
         self.max_workers = max_workers
         self.http_client = httpx.Client(timeout=30.0)
+        self.results = []
             
     def read_pdf(self, file_path: Union[str, Path]) -> str:
         """Read text from PDF file using pdfplumber."""
@@ -215,23 +215,14 @@ class TextExtractor:
     def process_documents(
         self,
         sources: List[Union[str, Path]],
-        output_dir: Optional[Union[str, Path]] = None,
         url_list: bool = False
-    ) -> Iterator[Dict]:
-        """Process multiple documents in parallel.
+    ) -> None:
+        """Process multiple documents in parallel and store results.
         
         Args:
             sources: List of file paths or URLs
-            output_dir: Optional directory to save individual JSON files
             url_list: If True, treat sources as URLs
-            
-        Yields:
-            Dict with metadata and cleaned text for each document
         """
-        if output_dir:
-            output_dir = Path(output_dir)
-            output_dir.mkdir(parents=True, exist_ok=True)
-
         # Process documents in parallel
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             futures = [
@@ -239,20 +230,9 @@ class TextExtractor:
                 for source in sources
             ]
             
-            # Yield results as they complete
+            # Collect results as they complete
             for future in tqdm(futures, total=len(sources), desc="Processing documents"):
-                result = future.result()
-                
-                if output_dir and not result["metadata"].get("error"):
-                    # Generate output filename
-                    source_path = Path(result["metadata"]["source"])
-                    output_file = output_dir / f"{source_path.stem}.json"
-                    
-                    # Save individual result
-                    with output_file.open('w', encoding='utf-8') as f:
-                        json.dump(result, f, ensure_ascii=False, indent=2)
-                
-                yield result
+                self.results.append(future.result())
 
     def __enter__(self):
         """Context manager entry.
@@ -260,17 +240,36 @@ class TextExtractor:
         Returns:
             self: The TextExtractor instance
         """
+        # Ensure output directory exists
+        self.output_file.parent.mkdir(parents=True, exist_ok=True)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit. Ensures HTTP client is properly closed.
+        """Context manager exit. Saves results and cleans up.
         
         Args:
             exc_type: Exception type if an error occurred
             exc_val: Exception value if an error occurred
             exc_tb: Exception traceback if an error occurred
         """
-        self.http_client.close()
+        try:
+            # Save all results to the output file
+            if self.results:
+                with self.output_file.open('w', encoding='utf-8') as f:
+                    json.dump({
+                        "documents": self.results,
+                        "total_documents": len(self.results),
+                        "successful_documents": sum(1 for doc in self.results if not doc["metadata"].get("error"))
+                    }, f, ensure_ascii=False, indent=2)
+        finally:
+            # Always close the HTTP client
+            self.http_client.close()
+
+
+
+
+
+
 
 
 import json
