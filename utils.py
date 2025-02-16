@@ -141,10 +141,10 @@ class TextExtractor:
             # Extract text using layout mode for better formatting
             # Include rotated text and adjust spacing for better results
             page_text = page.extract_text(
-                extraction_mode="layout",
-                layout_mode_strip_rotated=False,
-                layout_mode_scale_weight=1.25,
-                layout_mode_space_vertically=False
+                # extraction_mode="layout",
+                # layout_mode_strip_rotated=False,
+                # layout_mode_scale_weight=1.25,
+                # layout_mode_space_vertically=False
             )
             if page_text:
                 text_parts.append(page_text)
