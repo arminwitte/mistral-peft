@@ -302,7 +302,7 @@ class CLAPreprocessor:
         """Reads a single JSON file."""
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                return json.load(f)["documents"]
         except FileNotFoundError:
             raise FileNotFoundError(f"File not found: {file_path}")
         except json.JSONDecodeError:
@@ -312,7 +312,7 @@ class CLAPreprocessor:
         all_sentences = []
         for file_path in self.json_files:
             data = self._read_json(file_path)
-            all_sentences.extend(data["sentences"])
+            all_sentences.extend(data["text"])
 
         all_input_ids = []
         all_attention_masks = []
