@@ -312,7 +312,7 @@ class CLAPreprocessor:
         all_sentences = []
         for file_path in self.json_files:
             data = self._read_json(file_path)
-            all_sentences.extend(data["text"])
+            all_sentences += [d["text"] for d in data]
 
         all_input_ids = []
         all_attention_masks = []
