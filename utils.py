@@ -8,21 +8,12 @@ import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 
-import PyPDF2
-import spacy
 import torch
 from datasets import Dataset
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
-from markitdown import MarkItDown
-import nltk
 
-# try:
-#     nltk.data.find('tokenizers/punkt_tab')  # Check if Punkt tokenizer is downloaded
-# except LookupError:
-#     print("Downloading Punkt tokenizer. This might take a moment...")
-nltk.download('punkt_tab')
 
 
 def load_base_model(model_name: str = "mistralai/Mistral-7B-v0.3"):
@@ -237,39 +228,204 @@ class TextExtractor:
         raw_text = self.read_pdf(file_path)
         # raw_text = self.markitdown(file_path)
         print(f"Raw text length: {len(raw_text)}")
-        clean_text = self.clean_text(raw_text)
-        print(f"Cleaned text length: {len(clean_text)}")
-        # sentences = self.extract_sentences(clean_text)
-        # sentences = self.split_chunks(clean_text)
-        sentences = [clean_text]
-        print(f"Sentences: {len(sentences)}")
+
+import pdfplumber
+from pathlib import Path
+import json
+import re
+import httpx
+from typing import Union, Dict, Optional, List, Iterator
+from concurrent.futures import ThreadPoolExecutor
+from tqdm import tqdm
+import tempfile
+import os
+
+class TextExtractor:
+    def __init__(self, max_workers: int = 4):
+        """Initialize text extractor for LLM finetuning
         
-        # Prepare output
-        output = {
-            "metadata": {
-                "source": str(file_path),
-                "language": self.nlp.lang,
-                "num_sentences": len(sentences)
-            },
-            "sentences": sentences
-        }
-        
-        # Save if requested
-        if output_path:
-            path = Path(output_path)
-            with path.open('w', encoding='utf-8') as f:
-                json.dump(output, f, ensure_ascii=False, indent=2)
+        Args:
+            max_workers: Maximum number of concurrent workers for processing
+        """
+        self.max_workers = max_workers
+        self.http_client = httpx.Client(timeout=30.0)
+            
+    def read_pdf(self, file_path: Union[str, Path]) -> str:
+        """Read text from PDF file using pdfplumber."""
+        path = Path(file_path)
+        if not path.exists():
+            raise FileNotFoundError(f"PDF not found: {path}")
+            
+        text = []
+        with pdfplumber.open(path) as pdf:
+            for page in pdf.pages:
+                text.append(page.extract_text())
                 
-        return output
+        return "\n".join(text)
 
-    # Example usage
-    # extractor = SentenceExtractor()
-    # try:
-    #     result = extractor.process_document("example.pdf", "sentences.json")
-    #     print(f"Extracted {result['metadata']['num_sentences']} sentences")
-    # except FileNotFoundError as e:
-    #     print(f"Error: {e}")
+    def download_pdf(self, url: str) -> Path:
+        """Download PDF from URL to temporary file."""
+        response = self.http_client.get(url)
+        response.raise_for_status()
+        
+        # Create temp file with .pdf extension
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
+        tmp.write(response.content)
+        tmp.close()
+        return Path(tmp.name)
+    
+    def clean_text(self, text: str) -> str:
+        """Clean extracted text for LLM finetuning."""
+        # Remove page numbers and headers
+        text = re.sub(r'\f', '\n', text)
+        text = re.sub(r'\n\s*\d+\s*\n', '\n', text)
+        text = re.sub(r'(?i)(page|seite)\s*\d+\s*(?:of|von)\s*\d+', '', text)
+        
+        # Clean scientific formatting
+        text = re.sub(r'(?<=\d)\.(?=\d)', '.0', text)  # Add leading 0 after decimal
+        text = re.sub(r'×10\^(-?\d+)', lambda m: f'e{m.group(1)}', text)  # Fix scientific notation
+        
+        # Clean references and citations
+        text = re.sub(r'\[\d+(?:,\s*\d+)*\]', '', text)  # Remove citation brackets
+        text = re.sub(r'\(\d{4}\)', '', text)  # Remove year citations
+        text = re.sub(r'et al\.', 'et al', text)  # Standardize et al
+        
+        # Fix paragraph breaks
+        text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)  # Standardize paragraph breaks
+        text = re.sub(r'([.!?])\n(?=[A-Z])', r'\1\n\n', text)  # Add breaks after sentences
+        
+        # Clean whitespace
+        text = re.sub(r'\s+', ' ', text)  # Collapse multiple spaces
+        text = re.sub(r'^\s+|\s+$', '', text, flags=re.MULTILINE)  # Trim lines
+        
+        # Remove redundant whitespace around punctuation
+        text = re.sub(r'\s+([.,;?!])', r'\1', text)
+        text = re.sub(r'"\s+([^"]+)\s+"', r'"\1"', text)
+        
+        return text.strip()
 
+    def process_single_document(
+        self,
+        source: Union[str, Path],
+        is_url: bool = False
+    ) -> Dict:
+        """Process a single document from file or URL."""
+        try:
+            if is_url:
+                tmp_path = self.download_pdf(source)
+                raw_text = self.read_pdf(tmp_path)
+                os.unlink(tmp_path)  # Clean up temp file
+            else:
+                raw_text = self.read_pdf(source)
+                
+            clean_text = self.clean_text(raw_text)
+            
+            return {
+                "metadata": {
+                    "source": str(source),
+                    "text_length": len(clean_text),
+                    "is_url": is_url
+                },
+                "text": clean_text
+            }
+            
+        except Exception as e:
+            return {
+                "metadata": {
+                    "source": str(source),
+                    "error": str(e),
+                    "is_url": is_url
+                },
+                "text": ""
+            }
+
+    def process_documents(
+        self,
+        sources: List[Union[str, Path]],
+        output_dir: Optional[Union[str, Path]] = None,
+        url_list: bool = False
+    ) -> Iterator[Dict]:
+        """Process multiple documents in parallel.
+        
+        Args:
+            sources: List of file paths or URLs
+            output_dir: Optional directory to save individual JSON files
+            url_list: If True, treat sources as URLs
+            
+        Yields:
+            Dict with metadata and cleaned text for each document
+        """
+        if output_dir:
+            output_dir = Path(output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Process documents in parallel
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = [
+                executor.submit(self.process_single_document, source, url_list)
+                for source in sources
+            ]
+            
+            # Yield results as they complete
+            for future in tqdm(futures, total=len(sources), desc="Processing documents"):
+                result = future.result()
+                
+                if output_dir and not result["metadata"].get("error"):
+                    # Generate output filename
+                    source_path = Path(result["metadata"]["source"])
+                    output_file = output_dir / f"{source_path.stem}.json"
+                    
+                    # Save individual result
+                    with output_file.open('w', encoding='utf-8') as f:
+                        json.dump(result, f, ensure_ascii=False, indent=2)
+                
+                yield result
+
+    def __enter__(self):
+        """Context manager entry.
+        
+        Returns:
+            self: The TextExtractor instance
+        """
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit. Ensures HTTP client is properly closed.
+        
+        Args:
+            exc_type: Exception type if an error occurred
+            exc_val: Exception value if an error occurred
+            exc_tb: Exception traceback if an error occurred
+        """
+        self.http_client.close()
+
+# Example usage
+if __name__ == "__main__":
+    # Local files example
+    pdf_files = [
+        "document1.pdf",
+        "document2.pdf"
+    ]
+    
+    # URLs example
+    pdf_urls = [
+        "https://example.com/doc1.pdf",
+        "https://example.com/doc2.pdf"
+    ]
+    
+    with TextExtractor() as extractor:
+        # Process local files
+        results = list(extractor.process_documents(
+            pdf_files,
+            output_dir="output/local"
+        ))
+        
+        # Process URLs
+        url_results = list(extractor.process_documents(
+            pdf_urls,
+            output_dir="output/urls",
+            url_list=True
+        ))
 
 
 import json
