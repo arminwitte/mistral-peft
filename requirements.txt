@@ -8,7 +8,7 @@ numpy
 tqdm
 ipykernel
 jupyter
-pdfplumber
+pypdf
 datasets
 huggingface_hub
 protobuf
