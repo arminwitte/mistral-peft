@@ -97,137 +97,10 @@ def generate_response(
     return response.strip()
 
 
-################### SENTENCE EXTRACTOR ###################
+################### TEXT EXTRACTOR ###################
 
 
-
-
-
-
-class TextExtractor:
-    def __init__(self, language: str = "en"):
-        """Initialize spaCy for sentence extraction.
-        
-        Args:
-            language: 'en' for English or 'de' for German
-        """
-        model_name = "en_core_web_sm" if language == "en" else "de_core_news_sm"
-        try:
-            self.nlp = spacy.load(model_name)
-        except OSError:
-            spacy.cli.download(model_name)
-            self.nlp = spacy.load(model_name)
-            
-        # Configure pipeline for speed
-        self.nlp.select_pipes(enable=["senter", "parser"])
-
-    def markitdown(self, file_path: Union[str, Path]) -> str:
-        md = MarkItDown()
-        result = md.convert(file_path)
-        return result.text_content
-            
-    def read_pdf(self, file_path: Union[str, Path]) -> str:
-        """Read text from PDF file."""
-        path = Path(file_path)
-        if not path.exists():
-            raise FileNotFoundError(f"PDF not found: {path}")
-            
-        text = []
-        with open(path, 'rb') as file:
-            pdf = PyPDF2.PdfReader(file)
-            for page in tqdm(pdf.pages, desc="Reading PDF"):
-                text.append(page.extract_text())
-                
-        return "\n".join(text)
-    
-    def clean_text(self, text: str) -> str:
-        """Clean extracted text."""
-        # Basic cleaning
-        text = re.sub(r'\s+', ' ', text)
-        text = text.strip()
-        
-        # Remove page numbers and headers
-        text = re.sub(r'\f', '\n', text)
-        text = re.sub(r'\n\s*\d+\s*\n', '\n', text)
-        text = re.sub(r'(?i)(page|seite)\s*\d+\s*(?:of|von)\s*\d+', '', text)
-        
-        # Remove references
-        text = re.sub(r'\[\d+(?:,\s*\d+)*\]', '', text)
-        text = re.sub(r'\(\d{4}\)', '', text)
-        
-        return text.strip()
-    
-    def extract_sentences(self, text: str) -> List[str]:
-        """Extract valid sentences from text."""
-        doc = self.nlp(text)
-        sentences = []
-        
-        for sent in doc.sents:
-            sentence = sent.text.strip()
-            # Basic validation
-            if len(sentence.split()) >= 3 and len(sentence) >= 10:
-                sentences.append(sentence)
-                
-        return sentences
-    
-    def split_into_sentences(self, text, markdown_aware=True):
-        """Splits a text (optionally Markdown) into sentences.
-
-        Args:
-            text: The input text string.
-            markdown_aware: If True, attempts to handle some basic Markdown
-                        syntax to avoid splitting within links or emphasis.
-
-        Returns:
-            A list of strings, where each string is a sentence.
-            Returns an empty list if the input text is None or empty.
-        """
-
-        if not text:  # Handle None or empty input
-            return []
-
-        if markdown_aware:
-            # Protect Markdown links and emphasis from splitting
-            text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"LINK_\1_TO_\2", text)  # Links
-            text = re.sub(r"\*\*([^*]+)\*\*", r"BOLD_\1", text)  # Bold text
-            text = re.sub(r"\*([^*]+)\*", r"ITALIC_\1", text)  # Italic text
-            text = re.sub(r"`([^`]+)`", r"CODE_\1", text) # Inline code
-
-        sentences = nltk.sent_tokenize(text)
-
-        if markdown_aware:
-            # Restore Markdown syntax (this is a basic approach and might need refinement)
-            sentences = [s.replace("LINK_", "[").replace("_TO_", "](").replace("BOLD_", "**").replace("ITALIC_", "*").replace("CODE_", "`") for s in sentences]
-
-        return sentences
-
-    def split_chunks(self, text, chunk_size=4096):
-        n_chunks = len(text) // chunk_size
-        chunks = []
-        for i in range(n_chunks):
-            chunks.append(text[i*chunk_size:(i+1)*chunk_size])
-
-        return chunks
-       
-    
-    def process_document(
-        self,
-        file_path: Union[str, Path],
-        output_path: Optional[Union[str, Path]] = None
-    ) -> Dict:
-        """Process PDF document and extract sentences.
-        
-        Args:
-            file_path: Path to PDF file
-            output_path: Optional path to save JSON output
-            
-        Returns:
-            Dict with metadata and extracted sentences
-        """
-        # Extract and process text
-        raw_text = self.read_pdf(file_path)
-        # raw_text = self.markitdown(file_path)
-        print(f"Raw text length: {len(raw_text)}")
+   
 
 import pdfplumber
 from pathlib import Path
@@ -398,34 +271,6 @@ class TextExtractor:
             exc_tb: Exception traceback if an error occurred
         """
         self.http_client.close()
-
-# Example usage
-if __name__ == "__main__":
-    # Local files example
-    pdf_files = [
-        "document1.pdf",
-        "document2.pdf"
-    ]
-    
-    # URLs example
-    pdf_urls = [
-        "https://example.com/doc1.pdf",
-        "https://example.com/doc2.pdf"
-    ]
-    
-    with TextExtractor() as extractor:
-        # Process local files
-        results = list(extractor.process_documents(
-            pdf_files,
-            output_dir="output/local"
-        ))
-        
-        # Process URLs
-        url_results = list(extractor.process_documents(
-            pdf_urls,
-            output_dir="output/urls",
-            url_list=True
-        ))
 
 
 import json
