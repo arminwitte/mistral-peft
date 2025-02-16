@@ -169,11 +169,11 @@ class TextExtractor:
         
         # Clean whitespace
         text = re.sub(r'\s+', ' ', text)  # Collapse multiple spaces
-        text = re.sub(r'^\s+|\s+$', '', text, flags=re.MULTILINE)  # Trim lines
+        # text = re.sub(r'^\s+|\s+$', '', text, flags=re.MULTILINE)  # Trim lines
         
         # Remove redundant whitespace around punctuation
-        text = re.sub(r'\s+([.,;?!])', r'\1', text)
-        text = re.sub(r'"\s+([^"]+)\s+"', r'"\1"', text)
+        # text = re.sub(r'\s+([.,;?!])', r'\1', text)
+        # text = re.sub(r'"\s+([^"]+)\s+"', r'"\1"', text)
         
         return text.strip()
 
