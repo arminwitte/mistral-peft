@@ -164,6 +164,12 @@ class TextExtractor:
     
     def clean_text(self, text: str) -> str:
         """Clean extracted text for LLM finetuning."""
+        # Add this before other cleaning steps
+        # Look for common patterns of glued words like capitalLetters
+        text = re.sub(r'(?<=[a-z])(?=[A-Z])', ' ', text)  # Split "wordWord" into "word Word"
+        text = re.sub(r'(?<=[A-Za-z])(?=\d)', ' ', text)  # Split "word123" into "word 123"
+        text = re.sub(r'(?<=\d)(?=[A-Za-z])', ' ', text)  # Split "123word" into "123 word"
+
         # Remove headers and footers
         text = re.sub(r'\f', '\n', text)
         text = re.sub(r'^\s*\d+\s*$', '', text, flags=re.MULTILINE)  # Standalone page numbers
