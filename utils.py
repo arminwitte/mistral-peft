@@ -195,6 +195,10 @@ class TextExtractor:
         # Remove redundant whitespace around punctuation
         text = re.sub(r'\s+([.,;?!])', r'\1', text)
         text = re.sub(r'"\s+([^"]+)\s+"', r'"\1"', text)
+
+        # Remove successive punctuation marks, keeping only the first one
+        text = re.sub(r'([.,;?!])[.,;?!]+', r'\1', text)
+        
         
         return text.strip()
 
