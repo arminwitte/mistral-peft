@@ -15,89 +15,10 @@ from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 
-
-def load_base_model(model_name: str = "mistralai/Mistral-7B-v0.3"):
-    """Load the base model and tokenizer with 4-bit quantization."""
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    tokenizer.pad_token = tokenizer.eos_token
-
-    quantization_config = BitsAndBytesConfig(
-        load_in_8bit=True,  # Use load_in_8bit=True for 8-bit quantization
-    )
-
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name, torch_dtype=torch.float16, device_map="auto",
-    quantization_config=quantization_config,
-    )
-    return model, tokenizer
-
-
-def prepare_for_training(
-    model, lora_r: int = 8, lora_alpha: int = 16, lora_dropout: float = 0.05
-):
-    """Prepare model for LoRA training."""
-    model = prepare_model_for_kbit_training(model)
-    config = LoraConfig(
-        r=lora_r,
-        lora_alpha=lora_alpha,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
-        lora_dropout=lora_dropout,
-        bias="none",
-        task_type="CAUSAL_LM",
-    )
-    model = get_peft_model(model, config)
-    return model
-
-
-def prepare_text_chunks(text: str, max_length: int = 2000) -> List[str]:
-    """Split text into chunks for training."""
-    chunks = []
-    current_chunk = ""
-
-    for paragraph in text.split("\n\n"):
-        if len(current_chunk) + len(paragraph) < max_length:
-            current_chunk += paragraph + "\n\n"
-        else:
-            chunks.append(current_chunk.strip())
-            current_chunk = paragraph + "\n\n"
-
-    if current_chunk:
-        chunks.append(current_chunk.strip())
-
-    return chunks
-
-
-def generate_response(
-    model,
-    tokenizer,
-    prompt: str,
-    max_new_tokens: int = 512,
-    temperature: float = 0.7,
-    top_p: float = 0.9,
-    **kwargs,
-) -> str:
-    """Generate response from the model."""
-    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-
-    outputs = model.generate(
-        **inputs,
-        max_new_tokens=max_new_tokens,
-        temperature=temperature,
-        top_p=top_p,
-        pad_token_id=tokenizer.pad_token_id,
-        **kwargs,
-    )
-
-    response = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    # Remove the prompt from the response
-    response = response[
-        len(tokenizer.decode(inputs.input_ids[0], skip_special_tokens=True)) :
-    ]
-
-    return response.strip()
-
-
-################### TEXT EXTRACTOR ###################
+import json
+import os
+from datasets import Dataset
+from transformers import AutoTokenizer
 
 
 import re
@@ -110,6 +31,9 @@ from typing import Union, Dict, Optional, List
 from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 from pypdf import PdfReader
+
+################### TEXT EXTRACTOR ###################
+
 
 class TextExtractor:
     def __init__(self, output_file: Union[str, Path], max_workers: int = 4):
@@ -277,12 +201,6 @@ class TextExtractor:
 
 
 
-
-import json
-import os
-from datasets import Dataset
-from transformers import AutoTokenizer
-
 class CLMPreprocessor:
     def __init__(self, json_files, tokenizer, nlp=None):
         """
@@ -366,165 +284,3 @@ class CLMPreprocessor:
         """Preprocesses the data and creates the Hugging Face Dataset."""
         self._process_data()
         return self.dataset
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-################### EXPORT TO OLLAMA ###################
-
-
-def export_to_ollama(
-    model_path: Union[str, Path],
-    model_name: str,
-    description: str = "",
-    license: str = "Apache 2.0",
-    tags: Optional[list] = None,
-    system_prompt: str = "",
-) -> None:
-    """Export a fine-tuned model to Ollama format.
-
-    Args:
-        model_path: Path to the fine-tuned model directory
-        model_name: Name for the Ollama model
-        description: Model description
-        license: Model license
-        tags: List of tags for the model
-        system_prompt: System prompt to use with the model
-    """
-    model_path = Path(model_path)
-    if not model_path.exists():
-        raise FileNotFoundError(f"Model path not found: {model_path}")
-
-    # Create temporary directory for conversion
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_path = Path(temp_dir)
-
-        # First convert to GGUF format using llama.cpp
-        print("Converting to GGUF format...")
-        gguf_path = temp_path / "model.gguf"
-        convert_to_gguf(model_path, gguf_path)
-
-        # Create Modelfile
-        modelfile_content = create_modelfile(
-            model_name=model_name,
-            description=description,
-            license=license,
-            tags=tags or [],
-            system_prompt=system_prompt,
-        )
-
-        modelfile_path = temp_path / "Modelfile"
-        with open(modelfile_path, "w") as f:
-            f.write(modelfile_content)
-
-        # Create Ollama model
-        print(f"Creating Ollama model: {model_name}")
-        create_ollama_model(modelfile_path, gguf_path, model_name)
-
-        print(f"Model '{model_name}' has been created in Ollama")
-        print(f"You can now use it with: ollama run {model_name}")
-
-
-def convert_to_gguf(input_path: Path, output_path: Path, num_threads: int = 4) -> None:
-    """Convert model to GGUF format using llama.cpp."""
-    try:
-        # Check if llama-cpp-python is installed
-        subprocess.run(
-            ["python", "-c", "import llama_cpp"], check=True, capture_output=True
-        )
-    except subprocess.CalledProcessError:
-        raise RuntimeError(
-            "llama-cpp-python not found. Install with: pip install llama-cpp-python"
-        )
-
-    cmd = [
-        "python",
-        "-m",
-        "llama_cpp.convert",
-        "--outfile",
-        str(output_path),
-        "--outtype",
-        "q4_k_m",  # 4-bit quantization
-        "--threads",
-        str(num_threads),
-        str(input_path),
-    ]
-
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"GGUF conversion failed:\n{result.stderr}")
-
-
-def create_modelfile(
-    model_name: str,
-    description: str = "",
-    license: str = "Apache 2.0",
-    tags: list = None,
-    system_prompt: str = "",
-) -> str:
-    """Create Ollama Modelfile content."""
-    tags = tags or []
-
-    content = [
-        f"FROM {model_name}.gguf",
-        f'DESCRIPTION "{description}"',
-        f'LICENSE "{license}"',
-        *[f'TAG "{tag}"' for tag in tags],
-    ]
-
-    if system_prompt:
-        content.append(f'SYSTEM """{system_prompt}"""')
-
-    # Add some parameter configurations
-    content.extend(
-        [
-            "PARAMETER stop ",
-            "PARAMETER temperature 0.7",
-            "PARAMETER top_k 40",
-            "PARAMETER top_p 0.9",
-            "PARAMETER repeat_penalty 1.1",
-        ]
-    )
-
-    return "\n".join(content)
-
-
-def create_ollama_model(modelfile_path: Path, gguf_path: Path, model_name: str) -> None:
-    """Create Ollama model from Modelfile and GGUF model."""
-    # Create model directory in Ollama's model path
-    ollama_path = Path.home() / ".ollama" / "models" / model_name
-    ollama_path.mkdir(parents=True, exist_ok=True)
-
-    # Copy GGUF model
-    shutil.copy2(gguf_path, ollama_path / f"{model_name}.gguf")
-
-    # Copy Modelfile
-    shutil.copy2(modelfile_path, ollama_path / "Modelfile")
-
-    # Create Ollama model
-    cmd = ["ollama", "create", model_name]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-
-    if result.returncode != 0:
-        raise RuntimeError(f"Failed to create Ollama model:\n{result.stderr}")
-
-    # export_to_ollama(
-    #     model_path="./final_model",
-    #     model_name="dissertation-assistant",
-    #     description="Fine-tuned model for technical engineering content",
-    #     tags=["engineering", "technical", "heat-transfer"],
-    #     system_prompt="""You are a technical assistant specialized in heat transfer
-    #     and fluid dynamics. You provide accurate, technical responses based on
-    #     engineering principles and research data."""
-    # )
